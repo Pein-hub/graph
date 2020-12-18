@@ -4,6 +4,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
+import os
+import numpy as np
 
 from reading_data import DataReader, Metapath2vecDataset
 from model import SkipGramModel
@@ -34,9 +36,10 @@ class Metapath2VecTrainer:
         self.skip_gram_model = SkipGramModel(self.emb_size, self.emb_dimension)
 
         self.use_cuda = torch.cuda.is_available()
-        self.device = torch.device("cuda" if self.use_cuda else "cpu")
+        self.device = torch.device(f"cuda:{self.get_gpu_memory()}" if self.use_cuda else "cpu")
         if self.use_cuda:
-            self.skip_gram_model.cuda()
+            print('USE GPU')
+            self.skip_gram_model.to(self.device)
 
     def train(self):
 
@@ -69,6 +72,20 @@ class Metapath2VecTrainer:
                         print(" Loss: " + str(running_loss))
 
             self.skip_gram_model.save_embedding(self.data.id2word, self.output_path)
+
+    @staticmethod
+    def get_gpu_memory():
+        """
+        返回最大剩余内存的GPU下标
+        """
+        os.system('nvidia-smi -q -d Memory | grep -A4 GPU | grep Free > tmp.txt')
+        memory_gpu = [int(x.split()[2]) for x in open('tmp.txt', 'r').readlines()]
+        os.system('rm tmp.txt')
+        print(f'GPU free memory: {memory_gpu}')
+        gpu_list = np.argsort(memory_gpu)[::-1]
+        max_free_gpu_idx = gpu_list[0]
+        print(f'Use cuda: {max_free_gpu_idx}')
+        return max_free_gpu_idx
 
 
 if __name__ == '__main__':

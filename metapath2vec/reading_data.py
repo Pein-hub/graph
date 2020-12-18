@@ -22,7 +22,7 @@ class DataReader:
 
         self.read_words(min_count)  # 统计词频
         self.initTableNegatives()  # 负采样
-        self.initTableDiscards()  # ？？？
+        self.initTableDiscards()  # subsampling
 
     def read_words(self, min_count):
         # 词频

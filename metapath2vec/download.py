@@ -39,6 +39,7 @@ class AminerDataset(object):
         if not os.path.exists(os.path.join(path, 'aminer.txt')):
             print('File not found. Downloading from', self.url)
             self._download_and_extract(path, 'aminer.zip')
+
         self.fn = os.path.join(path, 'aminer.txt')
 
     def _download_and_extract(self, path, filename):
