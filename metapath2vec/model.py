@@ -31,6 +31,7 @@ class SkipGramModel(nn.Module):
         # [126084, 5, 128]
         emb_neg_v = self.v_embeddings(neg_v)  # 负采样的embedding层和邻居v是同一个，权重共享
 
+        # print(f'\tInner u size: {emb_u.size()}')
         # torch.mul 对应位相乘
         # torch.mm 矩阵乘法
         # 2个128维对应位相乘再sum，就是内积

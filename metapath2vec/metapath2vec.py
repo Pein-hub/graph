@@ -34,12 +34,27 @@ class Metapath2VecTrainer:
         self.initial_lr = args.initial_lr
 
         self.skip_gram_model = SkipGramModel(self.emb_size, self.emb_dimension)
-
+        self.device = torch.device("cpu")
+        self.skip_gram_model = self.skip_gram_model.to(self.device)
         self.use_cuda = torch.cuda.is_available()
-        self.device = torch.device(f"cuda:{self.get_gpu_memory()}" if self.use_cuda else "cpu")
         if self.use_cuda:
             print('USE GPU')
-            self.skip_gram_model.to(self.device)
+            # 单机多GPU训练, 3个GPU训练即可, 机器有8个GPU
+            gpu_list = self.get_gpu_memory()
+            cuda1 = f'cuda:{gpu_list[0]}'
+            cuda2 = f'cuda:{gpu_list[1]}'
+            cuda3 = f'cuda:{gpu_list[2]}'
+            print(cuda1, cuda2, cuda3)
+
+            # device后续输入和loss使用 cuda1
+            self.device = torch.device(cuda1)
+            # 改为GPU
+            self.skip_gram_model = self.skip_gram_model.to(self.device)
+            # 改为单机多GPU
+            self.skip_gram_model = torch.nn.DataParallel(
+                self.skip_gram_model,
+                device_ids=[cuda1, cuda2, cuda3],
+                output_device=cuda1)
 
     def train(self):
 
@@ -61,17 +76,24 @@ class Metapath2VecTrainer:
                     # （source node 对应的负采样） * 5
                     neg_v = sample_batched[2].to(self.device)
 
-                    scheduler.step()
+                    # print(f'Outside u size: {pos_u.size()}')
+
+
                     optimizer.zero_grad()
                     loss = self.skip_gram_model.forward(pos_u, pos_v, neg_v)
+                    # 多gpu，返回每个gpu的loss，取平均
+                    loss = loss.mean()
                     loss.backward()
                     optimizer.step()
+                    scheduler.step()
 
                     running_loss = running_loss * 0.9 + loss.item() * 0.1
                     if i > 0 and i % 500 == 0:
                         print(" Loss: " + str(running_loss))
 
-            self.skip_gram_model.save_embedding(self.data.id2word, self.output_path)
+            # DataParallel wrape后，要用 .module 来调用自定义Model的其他函数
+            # 每次iteration都save一次
+            self.skip_gram_model.module.save_embedding(self.data.id2word, self.output_path)
 
     @staticmethod
     def get_gpu_memory():
@@ -83,22 +105,21 @@ class Metapath2VecTrainer:
         os.system('rm tmp.txt')
         print(f'GPU free memory: {memory_gpu}')
         gpu_list = np.argsort(memory_gpu)[::-1]
-        max_free_gpu_idx = gpu_list[0]
-        print(f'Use cuda: {max_free_gpu_idx}')
-        return max_free_gpu_idx
+        return gpu_list
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Metapath2vec")
-    #parser.add_argument('--input_file', type=str, help="input_file")
+    # parser.add_argument('--input_file', type=str, help="input_file")
     parser.add_argument('--aminer', action='store_true', help='Use AMiner dataset')
     parser.add_argument('--path', default='./input', type=str, help="input_path")
     parser.add_argument('--output_file', default='./output', type=str, help='output_file')
     parser.add_argument('--dim', default=128, type=int, help="embedding dimensions")
     parser.add_argument('--window_size', default=7, type=int, help="context window size")
-    parser.add_argument('--iterations', default=5, type=int, help="iterations")
+    parser.add_argument('--iterations', default=3, type=int, help="iterations")
     parser.add_argument('--batch_size', default=50, type=int, help="batch size")
-    parser.add_argument('--care_type', default=0, type=int, help="if 1, heterogeneous negative sampling, else normal negative sampling")
+    parser.add_argument('--care_type', default=0, type=int,
+                        help="if 1, heterogeneous negative sampling, else normal negative sampling")
     parser.add_argument('--initial_lr', default=0.025, type=float, help="learning rate")
     parser.add_argument('--min_count', default=5, type=int, help="min count")  # 单词出现的次数，小于5次的不考虑
     parser.add_argument('--num_workers', default=16, type=int, help="number of workers")
