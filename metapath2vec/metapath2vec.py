@@ -77,8 +77,6 @@ class Metapath2VecTrainer:
                     neg_v = sample_batched[2].to(self.device)
 
                     # print(f'Outside u size: {pos_u.size()}')
-
-
                     optimizer.zero_grad()
                     loss = self.skip_gram_model.forward(pos_u, pos_v, neg_v)
                     # 多gpu，返回每个gpu的loss，取平均
