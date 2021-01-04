@@ -47,28 +47,58 @@ class Metapath2VecTrainer:
             print(cuda1, cuda2, cuda3)
 
             # device后续输入和loss使用 cuda1
-            self.device = torch.device(cuda1)
+            self.device = torch.device('cuda:6')
             # 改为GPU
             self.skip_gram_model = self.skip_gram_model.to(self.device)
-            # 改为单机多GPU
-            self.skip_gram_model = torch.nn.DataParallel(
-                self.skip_gram_model,
-                device_ids=[cuda1, cuda2, cuda3],
-                output_device=cuda1)
+            # # 改为单机多GPU
+            # self.skip_gram_model = torch.nn.DataParallel(
+            #     self.skip_gram_model,
+            #     device_ids=[cuda1, cuda2, cuda3],
+            #     output_device=cuda1)
 
     def train(self):
+        memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+        print(f'训练中: {memory}M')
+
+        optimizer = optim.SparseAdam(self.skip_gram_model.parameters(), lr=self.initial_lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(self.dataloader))
 
         for iteration in range(self.iterations):
             print("\n\n\nIteration: " + str(iteration + 1))
+
+            memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+            print(f'迭代中: {memory}M')
+
+            # 每一次迭代，都重新定义了一个 optimizer， scheduler，
+            # 那么每次迭代训练，GPU都会保存当前 optimizer 对应的梯度动量么？ 应该是每次都保存了模型的参数？不应该啊，参数应该是共享的）
+            # 每次 iteration 都是重新加载模型参数，更好训练
+            # 相当于一次epoch后，已经训练好一个embedding了，
+            # 一般 optimizer 是在epoch循环外面定义一次，是否这里反复定义导致GPU使用增加？
+
+
             # SparseAdam：基于稀疏张量的Adam
-            optimizer = optim.SparseAdam(self.skip_gram_model.parameters(), lr=self.initial_lr)
+            # optimizer = optim.SparseAdam(self.skip_gram_model.parameters(), lr=self.initial_lr)
             # CosineAnnealingLR：余弦退火来调节学习率
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(self.dataloader))
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(self.dataloader))
 
             running_loss = 0.0
+            # 一共3个循环，每次循环按50一个batch去遍历数据，理论上数据量已经很少了
+            # 一个batch是读取一行数据，一行数据就是一个节点的walk路径信息
             for i, sample_batched in enumerate(tqdm(self.dataloader)):
 
                 if len(sample_batched[0]) > 1:
+                    # print('-------------------'*5)
+                    # print(f'batch data1: {sample_batched[0].size()}')
+                    # print(f'batch data2: {sample_batched[1].size()}')
+                    # print(f'batch data3: {sample_batched[2].size()}')
+                    #
+                    # print(f'batch data1: {sample_batched[0].__sizeof__()}M')
+                    # print(f'batch data2: {sample_batched[1].__sizeof__()}M')
+                    # print(f'batch data3: {sample_batched[2].__sizeof__()}M')
+                    #
+                    # memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+                    # print(f'GPU1: {memory}M')
+
                     # (1个batch里面的source node数量) * 1
                     pos_u = sample_batched[0].to(self.device)
                     # (1个batch里面source node对应的line里面的邻居数量) * 1
@@ -76,22 +106,40 @@ class Metapath2VecTrainer:
                     # （source node 对应的负采样） * 5
                     neg_v = sample_batched[2].to(self.device)
 
+                    # memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+                    # print(f'GPU2: {memory}M')
+
                     # print(f'Outside u size: {pos_u.size()}')
                     optimizer.zero_grad()
                     loss = self.skip_gram_model.forward(pos_u, pos_v, neg_v)
                     # 多gpu，返回每个gpu的loss，取平均
-                    loss = loss.mean()
+                    # loss = loss.mean()
                     loss.backward()
+
+                    # memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+                    # print(f'GPU3: {memory}M')
+
                     optimizer.step()
                     scheduler.step()
 
+                    # memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+                    # print(f'GPU4: {memory}M')
+
+                    # 这个打印的损失是什么意思？
                     running_loss = running_loss * 0.9 + loss.item() * 0.1
                     if i > 0 and i % 500 == 0:
                         print(" Loss: " + str(running_loss))
+                        memory = torch.cuda.memory_allocated(6) / (1024 * 1024)
+                        print(f'训练中: {memory}M')
+                        print(f'batch data: {sample_batched[0].__sizeof__()}M')
+
+                        if memory > 6666:
+                            print('empty cache')
+                            torch.cuda.empty_cache()  # 只会释放没有引有的垃圾,
 
             # DataParallel wrape后，要用 .module 来调用自定义Model的其他函数
             # 每次iteration都save一次
-            self.skip_gram_model.module.save_embedding(self.data.id2word, self.output_path)
+            self.skip_gram_model.save_embedding(self.data.id2word, self.output_path)
 
     @staticmethod
     def get_gpu_memory():
@@ -107,6 +155,7 @@ class Metapath2VecTrainer:
 
 
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser(description="Metapath2vec")
     # parser.add_argument('--input_file', type=str, help="input_file")
     parser.add_argument('--aminer', action='store_true', help='Use AMiner dataset')
